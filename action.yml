@@ -423,7 +423,7 @@ runs:
 
     - name: Configure CMake with Docker
       if: steps.requirements.outputs.requires_docker_build == 'true'
-      id: configure
+      id: configure-docker
       uses: addnab/docker-run-action@v3
       with:
         image: ${{ steps.requirements.outputs.used_docker_image }}
