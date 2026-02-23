@@ -163,10 +163,6 @@ runs:
           
         elif [ "${{ steps.platform.outputs.id }}" = "mac" ]; then
 
-          if [ "${{ steps.platform.outputs.target_id }}" = "mac" ]; then
-             REQUIRES_XWIN=true
-          fi
-          
           if [ "$USED_CCACHE_VARIANT" != "default" ]; then
             REQUIRES_CUSTOM_SCCACHE=true
           else
@@ -242,7 +238,7 @@ runs:
         echo "$GITHUB_WORKSPACE/ninja" >> $GITHUB_PATH
 
     - name: Install dump_syms
-      if: steps.platform.outputs.requires_dump_syms == 'true'
+      if: steps.requirements.outputs.requires_dump_syms == 'true'
       shell: bash
       run: |
         curl -L https://github.com/mozilla/dump_syms/releases/latest/download/dump_syms-x86_64-unknown-linux-gnu.tar.xz -o dump_syms.tar.xz
@@ -416,7 +412,6 @@ runs:
       shell: bash
       run: |
         cd "${{ inputs.path }}"
-
         cmake -B build \
           -DCMAKE_BUILD_TYPE=${{ inputs.build-config }} \
           -DGEODE_CODEGEN_CMAKE_ARGS="-DCMAKE_C_COMPILER=clang;-DCMAKE_CXX_COMPILER=clang++;-G Ninja" \
@@ -434,6 +429,7 @@ runs:
         image: ${{ steps.requirements.outputs.used_docker_image }}
         options: --rm -v "${{ github.workspace }}:/workspace" -w /workspace
         run: |
+          cd "${{ inputs.path }}"
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ inputs.build-config }} \
             -DGEODE_CODEGEN_CMAKE_ARGS="-DCMAKE_C_COMPILER=clang;-DCMAKE_CXX_COMPILER=clang++;-G Ninja" \
@@ -457,6 +453,7 @@ runs:
         image: ${{ steps.requirements.outputs.used_docker_image }}
         options: --rm -v "${{ github.workspace }}:/workspace" -w /workspace
         run: |
+          cd "${{ inputs.path }}"
           cmake --build build --config ${{ inputs.build-config }} ${{ inputs.build-args }} --parallel
 
     - name: Collect build artifacts
