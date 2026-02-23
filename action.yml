@@ -92,7 +92,7 @@ runs:
       shell: bash
       run: |
         DEFAULT_TARGET=Win64
-        DEFAULT_CCACHE=sccache
+        
         if [ "$RUNNER_OS" = "Linux" ]; then
           ID=linux
           DEFAULT_TARGET=Android64
@@ -102,12 +102,7 @@ runs:
         elif [ "$RUNNER_OS" = "macOS" ]; then
           ID=mac
           DEFAULT_TARGET=MacOS
-          DEFAULT_CCACHE=
-        fi
-
-        CCACHE_VARIANT=${{ inputs.ccache-variant }}
-        if [ "$CCACHE_VARIANT" = "default" ]; then
-          CCACHE_VARIANT=$DEFAULT_CCACHE
+          
         fi
 
         TARGET=${{ inputs.target }}
@@ -132,8 +127,79 @@ runs:
         echo "target_id=$OUTPUT_ID" >> $GITHUB_OUTPUT
         echo "ccache_variant=$CCACHE_VARIANT" >> $GITHUB_OUTPUT
 
+    - name: Detect requirements
+      id: requirements
+      shell: bash
+      run: |
+        REQUIRES_CUSTOM_SCCACHE=false
+        REQUIRES_CCACHE=false
+        REQUIRES_DOCKER_BUILD=false
+        REQUIRES_XWIN=false
+        REQUIRES_DUMP_SYMS=false
+        USED_DOCKER_IMAGE=""
+        DEFAULT_CCACHE_VARIANT=sccache
+        USED_CCACHE_VARIANT=${{ inputs.ccache-variant }}
+        CMAKE_EXTRA_ARGS=""
+
+
+        if [ "${{ steps.platform.outputs.id }}" = "linux" ]; then
+
+          if [ "${{ steps.platform.outputs.target_id }}" = "mac" ]; then
+            REQUIRES_DOCKER_BUILD=true
+            USED_DOCKER_IMAGE="prevter/geode-sdk:macos"
+          elif [ "${{ steps.platform.outputs.target_id }}" = "ios" ]; then
+            REQUIRES_DOCKER_BUILD=true
+            USED_DOCKER_IMAGE="prevter/geode-sdk:ios"
+          elif [ "${{ steps.platform.outputs.target_id }}" = "win" ]; then
+            REQUIRES_XWIN=true
+          elif [ "${{ steps.platform.outputs.target_id }}" = "android32" ]; then
+            REQUIRES_DUMP_SYMS=true
+          elif [ "${{ steps.platform.outputs.target_id }}" = "android64" ]; then
+            REQUIRES_DUMP_SYMS=true
+          fi
+
+          if [ "$USED_CCACHE_VARIANT" = "default" ]; then
+            USED_CCACHE_VARIANT=$DEFAULT_CCACHE_VARIANT
+          fi
+          
+        elif [ "${{ steps.platform.outputs.id }}" = "mac" ]; then
+
+          if [ "${{ steps.platform.outputs.target_id }}" = "mac" ]; then
+             REQUIRES_XWIN=true
+          fi
+          
+          if [ "$USED_CCACHE_VARIANT" != "default" ]; then
+            REQUIRES_CUSTOM_SCCACHE=true
+          else
+            USED_CCACHE_VARIANT=""
+          fi
+
+        elif [ "${{ steps.platform.outputs.id }}" = "win" ]; then
+
+          if [ "$USED_CCACHE_VARIANT" = "default" ]; then
+            USED_CCACHE_VARIANT=$DEFAULT_CCACHE_VARIANT
+          fi
+          
+        fi
+
+        if [ "${{ inputs.export-symbols }}" != "true" ]; then
+          REQUIRES_DUMP_SYMS=false
+        fi
+
+        if [ "$USED_CCACHE_VARIANT" != "" ]; then
+          REQUIRES_CCACHE=true
+        fi
+        
+        echo "requires_ccache=$REQUIRES_CCACHE" >> $GITHUB_OUTPUT
+        echo "requires_custom_sccache=$REQUIRES_CUSTOM_SCCACHE" >> $GITHUB_OUTPUT
+        echo "requires_docker_build=$REQUIRES_DOCKER_BUILD" >> $GITHUB_OUTPUT
+        echo "used_docker_image=$USED_DOCKER_IMAGE" >> $GITHUB_OUTPUT
+        echo "requires_xwin=$REQUIRES_XWIN" >> $GITHUB_OUTPUT
+        echo "requires_dump_syms=$REQUIRES_DUMP_SYMS" >> $GITHUB_OUTPUT
+
     # https://github.com/mozilla/sccache/issues/2090
     - name: Download custom sccache
+      if: steps.requirements.outputs.requires_custom_sccache == 'true'
       uses: robinraju/release-downloader@v1.9
       with:
         repository: cgytrus/sccache
@@ -142,10 +208,9 @@ runs:
         tarBall: false
         zipBall: false
         out-file-path: "epic-sccache"
-      if: steps.platform.outputs.id == 'mac' && steps.platform.outputs.ccache_variant != ''
 
     - name: Setup custom sccache
-      if: steps.platform.outputs.id == 'mac' && steps.platform.outputs.ccache_variant != ''
+      if: steps.requirements.outputs.requires_custom_sccache == 'true'
       shell: bash
       run: |
         7z x "epic-sccache/sccache-*-x86_64-apple-darwin.zip" -o"epic-sccache"
@@ -154,11 +219,11 @@ runs:
         echo "SCCACHE_CACHE_MULTIARCH=1" >> $GITHUB_ENV
 
     - name: Setup sccache
+      if: steps.requirements.outputs.requires_ccache == 'true'
       uses: hendrikmuhs/ccache-action@v1
       with:
         variant: ${{ steps.platform.outputs.ccache_variant }}
         key: ${{ steps.platform.outputs.target_id }}-v1
-      if: steps.platform.outputs.ccache_variant != ''
 
     - name: Setup CPM Cache
       if: inputs.use-cpm-cache == 'true'
@@ -177,7 +242,7 @@ runs:
         echo "$GITHUB_WORKSPACE/ninja" >> $GITHUB_PATH
 
     - name: Install dump_syms
-      if: inputs.export-symbols == 'true' && steps.platform.outputs.id == 'linux' && (steps.platform.outputs.target_id == 'android32' || steps.platform.outputs.target_id == 'android64')
+      if: steps.platform.outputs.requires_dump_syms == 'true'
       shell: bash
       run: |
         curl -L https://github.com/mozilla/dump_syms/releases/latest/download/dump_syms-x86_64-unknown-linux-gnu.tar.xz -o dump_syms.tar.xz
@@ -186,7 +251,7 @@ runs:
         echo "$GITHUB_WORKSPACE/dump_syms-x86_64-unknown-linux-gnu" >> $GITHUB_PATH
     
     - name: Download xwin
-      if: steps.platform.outputs.id == 'linux' && steps.platform.outputs.target_id == 'win'
+      if: steps.requirements.outputs.requires_xwin == 'true'
       uses: robinraju/release-downloader@v1.12
       with:
         repository: Jake-Shadle/xwin
@@ -197,7 +262,7 @@ runs:
         out-file-path: "epic-xwin"
 
     - name: Prepare xwin
-      if: steps.platform.outputs.id == 'linux' && steps.platform.outputs.target_id == 'win'
+      if: steps.requirements.outputs.requires_xwin == 'true'
       shell: bash
       run: |
         tar -xzf epic-xwin/xwin-*-x86_64-unknown-linux-musl.tar.gz -C epic-xwin
@@ -205,7 +270,7 @@ runs:
         ./xwin --arch x86_64 --sdk-version 10.0.22621 --accept-license list
 
     - name: Setup xwin Cache
-      if: steps.platform.outputs.id == 'linux' && steps.platform.outputs.target_id == 'win'
+      if: steps.requirements.outputs.requires_xwin == 'true'
       id: xwin-cache
       uses: actions/cache@v4
       with:
@@ -213,19 +278,19 @@ runs:
         key: xwin-win-v1-${{ hashFiles('.xwin-cache/**/*') }}
 
     - name: Download Windows headers
-      if: steps.platform.outputs.id == 'linux' && steps.platform.outputs.target_id == 'win' && steps.xwin-cache.outputs.cache-hit != 'true'
+      if: steps.requirements.outputs.requires_xwin == 'true' && steps.xwin-cache.outputs.cache-hit != 'true'
       shell: bash
       run: ./xwin --arch x86_64 --sdk-version 10.0.22621 --accept-license splat --include-debug-libs
 
     - name: Download clang-msvc-sdk
-      if: steps.platform.outputs.id == 'linux' && steps.platform.outputs.target_id == 'win'
+      if: steps.requirements.outputs.requires_xwin == 'true'
       uses: actions/checkout@v4
       with:
         repository: geode-sdk/clang-msvc-sdk
         path: clang-msvc-sdk
 
     - name: Install Clang 19
-      if: steps.platform.outputs.id == 'linux' && steps.platform.outputs.target_id == 'win'
+      if: steps.requirements.outputs.requires_xwin == 'true'
       shell: bash
       run: |
         sudo rm -f /var/lib/man-db/auto-update
